@@ -1,9 +1,11 @@
 
+mod error;
 mod load;
 
 use structopt::StructOpt;
 use std::path::PathBuf;
 use std::fs;
+use crate::error::*;
 
 #[derive(StructOpt)]
 struct Options {
@@ -14,8 +16,19 @@ struct Options {
 fn main() {
     let options = Options::from_args();
 
-    let bytes = fs::read(&options.input).unwrap();
-    let module = load::parse_module(&bytes).unwrap();
+    match start(&options) {
+        Ok(()) => eprintln!("done"),
+        Err(e) => eprintln!("Error: {}", e),
+    }
 }
 
+
+fn start(options: &Options) -> Result<()> {
+    let bytes = fs::read(&options.input)?;
+    let module = load::parse_module(&bytes)?;
+
+    dbg!(module);
+
+    Ok(())
+}
 
