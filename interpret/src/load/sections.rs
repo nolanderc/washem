@@ -233,7 +233,7 @@ fn locals(bytes: &[u8]) -> ParseResult<Locals> {
 
 pub fn data_section(bytes: &[u8]) -> ParseResult<DataSection> {
     parse_section(
-        SectionKind::Code,
+        SectionKind::Data,
         map(vec(data_segment), |segments| DataSection { segments }),
     )(bytes)
 }

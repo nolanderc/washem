@@ -24,6 +24,8 @@ pub struct Limits {
     pub upper: Option<u32>,
 }
 
+const PAGE_SIZE: u32 = 1 << 16;
+
 #[derive(Debug)]
 pub struct MemoryType {
     pub limits: Limits,

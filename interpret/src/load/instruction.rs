@@ -187,9 +187,9 @@ fn numeric_instructions(bytes: &[u8]) -> ParseResult<Instruction> {
 fn numeric_const(bytes: &[u8]) -> ParseResult<Instruction> {
     alt((
         map(preceded(op(0x41), leb_s32), Instruction::I32Const),
-        map(preceded(op(0x41), leb_s64), Instruction::I64Const),
-        map(preceded(op(0x41), le_f32), Instruction::F32Const),
-        map(preceded(op(0x41), le_f64), Instruction::F64Const),
+        map(preceded(op(0x42), leb_s64), Instruction::I64Const),
+        map(preceded(op(0x43), le_f32), Instruction::F32Const),
+        map(preceded(op(0x44), le_f64), Instruction::F64Const),
     ))(bytes)
 }
 
