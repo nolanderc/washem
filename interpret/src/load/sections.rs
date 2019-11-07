@@ -5,30 +5,14 @@ use super::indices::*;
 use super::structure::*;
 use super::types::*;
 use super::values::*;
+use crate::ast::sections::*;
 use nom::{branch::*, bytes::complete::*, combinator::*, multi::*, sequence::*};
 use std::convert::TryFrom;
-use std::fmt::{Display, Formatter, Result as FmtResult};
 
 #[derive(Debug, Copy, Clone)]
 struct SectionHeader {
     kind: SectionKind,
     size: u32,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum SectionKind {
-    Custom,
-    Type,
-    Import,
-    Function,
-    Table,
-    Memory,
-    Global,
-    Export,
-    Start,
-    Element,
-    Code,
-    Data,
 }
 
 impl TryFrom<u8> for SectionKind {
@@ -52,27 +36,6 @@ impl TryFrom<u8> for SectionKind {
         };
 
         Ok(kind)
-    }
-}
-
-impl Display for SectionKind {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        let text = match self {
-            SectionKind::Custom => "custom",
-            SectionKind::Type => "type",
-            SectionKind::Import => "import",
-            SectionKind::Function => "function",
-            SectionKind::Table => "table",
-            SectionKind::Memory => "memory",
-            SectionKind::Global => "global",
-            SectionKind::Export => "export",
-            SectionKind::Start => "start",
-            SectionKind::Element => "element",
-            SectionKind::Code => "code",
-            SectionKind::Data => "data",
-        };
-
-        Display::fmt(text, f)
     }
 }
 
@@ -112,16 +75,8 @@ fn parse_section<'a, T: 'a>(
     )
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct CustomSection {}
-
 pub fn custom_section(bytes: &[u8]) -> ParseResult<CustomSection> {
-    parse_section(SectionKind::Custom, constant(CustomSection {}))(bytes)
-}
-
-#[derive(Debug)]
-pub struct TypeSection {
-    functions: Vec<FunctionType>,
+    parse_section(SectionKind::Custom, map(rest, |_bytes| CustomSection {}))(bytes)
 }
 
 pub fn type_section(bytes: &[u8]) -> ParseResult<TypeSection> {
@@ -129,26 +84,6 @@ pub fn type_section(bytes: &[u8]) -> ParseResult<TypeSection> {
         SectionKind::Type,
         map(vec(function_type), |functions| TypeSection { functions }),
     )(bytes)
-}
-
-#[derive(Debug)]
-pub struct ImportSection {
-    imports: Vec<Import>,
-}
-
-#[derive(Debug)]
-pub struct Import {
-    module: String,
-    name: String,
-    descriptor: ImportDescriptor,
-}
-
-#[derive(Debug)]
-pub enum ImportDescriptor {
-    Function(TypeIndex),
-    Table(TableType),
-    Memory(MemoryType),
-    Global(GlobalType),
 }
 
 pub fn import_section(bytes: &[u8]) -> ParseResult<ImportSection> {
@@ -179,26 +114,11 @@ pub fn import_descriptor(bytes: &[u8]) -> ParseResult<ImportDescriptor> {
     ))(bytes)
 }
 
-#[derive(Debug)]
-pub struct FunctionSection {
-    types: Vec<TypeIndex>,
-}
-
 pub fn function_section(bytes: &[u8]) -> ParseResult<FunctionSection> {
     parse_section(
         SectionKind::Function,
         map(vec(type_index), |types| FunctionSection { types }),
     )(bytes)
-}
-
-#[derive(Debug)]
-pub struct TableSection {
-    tables: Vec<Table>,
-}
-
-#[derive(Debug)]
-pub struct Table {
-    ty: TableType,
 }
 
 pub fn table_section(bytes: &[u8]) -> ParseResult<TableSection> {
@@ -212,16 +132,6 @@ pub fn table(bytes: &[u8]) -> ParseResult<Table> {
     map(table_type, |ty| Table { ty })(bytes)
 }
 
-#[derive(Debug)]
-pub struct MemorySection {
-    memories: Vec<Memory>,
-}
-
-#[derive(Debug)]
-pub struct Memory {
-    ty: MemoryType,
-}
-
 pub fn memory_section(bytes: &[u8]) -> ParseResult<MemorySection> {
     parse_section(
         SectionKind::Memory,
@@ -231,17 +141,6 @@ pub fn memory_section(bytes: &[u8]) -> ParseResult<MemorySection> {
 
 pub fn memory(bytes: &[u8]) -> ParseResult<Memory> {
     map(memory_type, |ty| Memory { ty })(bytes)
-}
-
-#[derive(Debug)]
-pub struct GlobalSection {
-    globals: Vec<Global>,
-}
-
-#[derive(Debug)]
-pub struct Global {
-    ty: GlobalType,
-    expression: Expression,
 }
 
 pub fn global_section(bytes: &[u8]) -> ParseResult<GlobalSection> {
@@ -255,25 +154,6 @@ pub fn global(bytes: &[u8]) -> ParseResult<Global> {
     map(tuple((global_type, expression)), |(ty, expression)| {
         Global { ty, expression }
     })(bytes)
-}
-
-#[derive(Debug)]
-pub struct ExportSection {
-    exports: Vec<Export>,
-}
-
-#[derive(Debug)]
-pub struct Export {
-    name: String,
-    descriptor: ExportDescriptor,
-}
-
-#[derive(Debug)]
-pub enum ExportDescriptor {
-    Function(FunctionIndex),
-    Table(TableIndex),
-    Memory(MemoryIndex),
-    Global(GlobalIndex),
 }
 
 pub fn export_section(bytes: &[u8]) -> ParseResult<ExportSection> {
@@ -302,28 +182,11 @@ pub fn export_descriptor(bytes: &[u8]) -> ParseResult<ExportDescriptor> {
     ))(bytes)
 }
 
-#[derive(Debug)]
-pub struct StartSection {
-    start: FunctionIndex,
-}
-
 pub fn start_section(bytes: &[u8]) -> ParseResult<StartSection> {
     parse_section(
         SectionKind::Start,
         map(function_index, |start| StartSection { start }),
     )(bytes)
-}
-
-#[derive(Debug)]
-pub struct ElementSection {
-    elements: Vec<Element>,
-}
-
-#[derive(Debug)]
-pub struct Element {
-    table: TableIndex,
-    offset: Expression,
-    init: Vec<FunctionIndex>,
 }
 
 pub fn element_section(bytes: &[u8]) -> ParseResult<ElementSection> {
@@ -342,23 +205,6 @@ fn element(bytes: &[u8]) -> ParseResult<Element> {
             init,
         },
     )(bytes)
-}
-
-#[derive(Debug)]
-pub struct CodeSection {
-    segments: Vec<Code>,
-}
-
-#[derive(Debug)]
-pub struct Code {
-    locals: Vec<Locals>,
-    body: Expression,
-}
-
-#[derive(Debug)]
-pub struct Locals {
-    count: u32,
-    ty: ValueType,
 }
 
 pub fn code_section(bytes: &[u8]) -> ParseResult<CodeSection> {
@@ -383,18 +229,6 @@ fn locals(bytes: &[u8]) -> ParseResult<Locals> {
         count,
         ty,
     })(bytes)
-}
-
-#[derive(Debug)]
-pub struct DataSection {
-    segments: Vec<DataSegment>,
-}
-
-#[derive(Debug)]
-struct DataSegment {
-    memory: MemoryIndex,
-    offset: Expression,
-    bytes: Vec<u8>,
 }
 
 pub fn data_section(bytes: &[u8]) -> ParseResult<DataSection> {

@@ -8,7 +8,7 @@ pub use failure::{Fail, ResultExt};
 
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
-use super::sections::SectionKind;
+use crate::ast::sections::SectionKind;
 pub use crate::error::*;
 
 #[derive(Debug)]
@@ -28,6 +28,10 @@ pub enum ParseErrorKind {
     UnexpectedEof,
     #[fail(display = "invalid u32")]
     InvalidU32,
+    #[fail(display = "invalid i32")]
+    InvalidI32,
+    #[fail(display = "invalid i64")]
+    InvalidI64,
     #[fail(display = "invalid value type")]
     InvalidValueType,
     #[fail(display = "section kind mismatch")]
@@ -79,7 +83,9 @@ impl<'a> NomError<&'a [u8]> for ParseError {
 }
 
 impl From<ParseLocation> for ParseErrorKind {
-    fn from(location: ParseLocation) -> Self { ParseErrorKind::While(location) }
+    fn from(location: ParseLocation) -> Self {
+        ParseErrorKind::While(location)
+    }
 }
 
 impl From<ParseError> for nom::Err<ParseError> {

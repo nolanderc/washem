@@ -1,6 +1,6 @@
-use nom::multi::*;
 use super::error::*;
 use super::values::*;
+use nom::multi::*;
 
 pub fn vec<T>(f: impl Fn(&[u8]) -> ParseResult<T>) -> impl Fn(&[u8]) -> ParseResult<Vec<T>> {
     move |bytes| {
@@ -8,4 +8,3 @@ pub fn vec<T>(f: impl Fn(&[u8]) -> ParseResult<T>) -> impl Fn(&[u8]) -> ParseRes
         count(&f, n as usize)(bytes)
     }
 }
-

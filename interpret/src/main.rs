@@ -1,17 +1,17 @@
-
+mod ast;
 mod error;
+mod executor;
 mod load;
 
-use structopt::StructOpt;
-use std::path::PathBuf;
-use std::fs;
 use crate::error::*;
+use std::fs;
+use std::path::PathBuf;
+use structopt::StructOpt;
 
 #[derive(StructOpt)]
 struct Options {
     input: PathBuf,
 }
-
 
 fn main() {
     let options = Options::from_args();
@@ -22,7 +22,6 @@ fn main() {
     }
 }
 
-
 fn start(options: &Options) -> Result<()> {
     let bytes = fs::read(&options.input)?;
     let module = load::parse_module(&bytes)?;
@@ -31,4 +30,3 @@ fn start(options: &Options) -> Result<()> {
 
     Ok(())
 }
-

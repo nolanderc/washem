@@ -34,13 +34,60 @@ pub fn leb_u32(bytes: &[u8]) -> ParseResult<u32> {
 }
 
 pub fn leb_s32(bytes: &[u8]) -> ParseResult<i32> {
-    unimplemented!()
+    let mut bytes = bytes.iter();
+
+    let mut value = 0i32;
+    let size = 32;
+    let mut shift = 0;
+
+    loop {
+        let byte = *bytes.next().ok_or(ParseErrorKind::UnexpectedEof)?;
+
+        value |= i32::from(byte & 0b0111_1111) << shift;
+
+        shift += 7;
+
+        if byte < 128 {
+            if shift < size && (byte & 0b0100_0000 != 0) {
+                value |= !0 << shift
+            }
+
+            return Ok((bytes.as_slice(), value));
+        }
+
+        if shift >= size {
+            return Err(ParseErrorKind::InvalidI32.into());
+        }
+    }
 }
 
 pub fn leb_s64(bytes: &[u8]) -> ParseResult<i64> {
-    unimplemented!()
-}
+    let mut bytes = bytes.iter();
 
+    let mut value = 0i64;
+    let size = 64;
+    let mut shift = 0;
+
+    loop {
+        let byte = *bytes.next().ok_or(ParseErrorKind::UnexpectedEof)?;
+
+        value |= i64::from(byte & 0b0111_1111) << shift;
+
+        shift += 7;
+
+        if byte < 128 {
+            if shift < size && (byte & 0b0100_0000 != 0) {
+                value |= !0 << shift
+            }
+
+            return Ok((bytes.as_slice(), value));
+        }
+
+        if shift >= size {
+            return Err(ParseErrorKind::InvalidI64.into());
+        }
+    }
+}
 
 pub fn name(bytes: &[u8]) -> ParseResult<&str> {
     let (bytes, text) = length_data(leb_u32)(bytes)?;
@@ -51,5 +98,3 @@ pub fn name(bytes: &[u8]) -> ParseResult<&str> {
 
     Ok((bytes, text))
 }
-
-

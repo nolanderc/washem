@@ -1,174 +1,22 @@
 use super::error::*;
-use super::values::*;
 use super::indices::*;
-use nom::{branch::*, combinator::*, number::complete::*, sequence::*};
+use super::structure::*;
+use super::types::*;
+use super::values::*;
+use crate::ast::instruction::*;
+use nom::{
+    branch::*, bytes::complete::*, combinator::*, multi::*, number::complete::*, sequence::*,
+};
 
 pub const END_BYTE: u8 = 0x0b;
-
-#[derive(Debug)]
-pub enum Instruction {
-    // Control
-    Unreachable,
-    Nop,
-
-    // Parametric
-    Drop,
-    Select,
-
-    // Variable
-    LocalGet(LocalIndex),
-    LocalSet(LocalIndex),
-    LocalTee(LocalIndex),
-    GlobalGet(GlobalIndex),
-    GlobalSet(GlobalIndex),
-
-    // Memory
-
-    // Numeric
-    I32Const(i32),
-    I64Const(i64),
-    F32Const(f32),
-    F64Const(f64),
-
-    I32EqualZero,
-    I32Equal,
-    I32NotEqual,
-    I32LessThanSigned,
-    I32LessThanUnsigned,
-    I32GreaterThanSigned,
-    I32GreaterThanUnsigned,
-    I32LessEqualSigned,
-    I32LessEqualUnsigned,
-    I32GreaterEqualSigned,
-    I32GreaterEqualUnsigned,
-
-    I64EqualZero,
-    I64Equal,
-    I64NotEqual,
-    I64LessThanSigned,
-    I64LessThanUnsigned,
-    I64GreaterThanSigned,
-    I64GreaterThanUnsigned,
-    I64LessEqualSigned,
-    I64LessEqualUnsigned,
-    I64GreaterEqualSigned,
-    I64GreaterEqualUnsigned,
-
-    F32Equal,
-    F32NotEqual,
-    F32LessThan,
-    F32GreaterThan,
-    F32LessEqual,
-    F32GreaterEqual,
-
-    F64Equal,
-    F64NotEqual,
-    F64LessThan,
-    F64GreaterThan,
-    F64LessEqual,
-    F64GreaterEqual,
-
-    I32LeadingZeros,
-    I32TrailingZeros,
-    I32CountOnes,
-    I32Add,
-    I32Sub,
-    I32Mul,
-    I32DivSigned,
-    I32DivUnsigned,
-    I32RemainderSigned,
-    I32RemainderUnsigned,
-    I32And,
-    I32Or,
-    I32Xor,
-    I32ShiftLeft,
-    I32ShiftRightSigned,
-    I32ShiftRightUnsigned,
-    I32RotateLeft,
-    I32RotateRight,
-
-    I64LeadingZeros,
-    I64TrailingZeros,
-    I64CountOnes,
-    I64Add,
-    I64Sub,
-    I64Mul,
-    I64DivSigned,
-    I64DivUnsigned,
-    I64RemainderSigned,
-    I64RemainderUnsigned,
-    I64And,
-    I64Or,
-    I64Xor,
-    I64ShiftLeft,
-    I64ShiftRightSigned,
-    I64ShiftRightUnsigned,
-    I64RotateLeft,
-    I64RotateRight,
-
-    F32Abs,
-    F32Neg,
-    F32Ceil,
-    F32Floor,
-    F32Trunc,
-    F32Nearest,
-    F32Sqrt,
-    F32Add,
-    F32Sub,
-    F32Mul,
-    F32Div,
-    F32Min,
-    F32Max,
-    F32Copysign,
-
-    F64Abs,
-    F64Neg,
-    F64Ceil,
-    F64Floor,
-    F64Trunc,
-    F64Nearest,
-    F64Sqrt,
-    F64Add,
-    F64Sub,
-    F64Mul,
-    F64Div,
-    F64Min,
-    F64Max,
-    F64Copysign,
-
-    I32WrapI64,
-    I32TruncF32Signed,
-    I32TruncF32Unsigned,
-    I32TruncF64Signed,
-    I32TruncF64Unsigned,
-    I64ExtendI32Signed,
-    I64ExtendI32Unsigned,
-    I64TruncF32Signed,
-    I64TruncF32Unsigned,
-    I64TruncF64Signed,
-    I64TruncF64Unsigned,
-    F32ConvertI32Signed,
-    F32ConvertI32Unsigned,
-    F32ConvertI64Signed,
-    F32ConvertI64Unsigned,
-    F32DemoteF64,
-    F64ConvertI32Signed,
-    F64ConvertI32Unsigned,
-    F64ConvertI64Signed,
-    F64ConvertI64Unsigned,
-    F64PromoteF32,
-    I32ReinterpretF32,
-    I64ReinterpretF64,
-    F32ReinterpretI32,
-    F64ReinterpretI64,
-}
+pub const ELSE_BYTE: u8 = 0x05;
 
 pub fn instruction(bytes: &[u8]) -> ParseResult<Instruction> {
-    eprintln!("{:x?}", bytes);
     wrap_context(
         alt((
             control_instruction,
             paremetric_instruction,
+            memory_instruction,
             variable_instructions,
             numeric_instructions,
         )),
@@ -195,7 +43,71 @@ fn control_instruction(bytes: &[u8]) -> ParseResult<Instruction> {
     alt((
         map(op(0x00), |_| Instruction::Unreachable),
         map(op(0x01), |_| Instruction::Nop),
+        block,
+        looping,
+        conditional,
+        map(preceded(op(0x0C), label_index), Instruction::Branch),
+        map(
+            preceded(op(0x0D), label_index),
+            Instruction::BranchConditional,
+        ),
+        map(
+            preceded(op(0x0E), tuple((vec(label_index), label_index))),
+            |(targets, default)| Instruction::BranchTable { targets, default },
+        ),
+        map(op(0x0F), |_| Instruction::Return),
+        map(preceded(op(0x10), function_index), Instruction::Call),
+        map(
+            preceded(op(0x11), terminated(type_index, tag(&[0x00]))),
+            Instruction::CallIndirect,
+        ),
     ))(bytes)
+}
+
+fn instruction_sequence(bytes: &[u8]) -> ParseResult<Vec<Instruction>> {
+    map(
+        many_till(instruction, tag(&[END_BYTE])),
+        |(instructions, _)| instructions,
+    )(bytes)
+}
+
+fn block(bytes: &[u8]) -> ParseResult<Instruction> {
+    map(
+        preceded(op(0x02), tuple((result_type, instruction_sequence))),
+        |(result, instructions)| Instruction::Block {
+            result,
+            instructions,
+        },
+    )(bytes)
+}
+
+fn looping(bytes: &[u8]) -> ParseResult<Instruction> {
+    map(
+        preceded(op(0x03), tuple((result_type, instruction_sequence))),
+        |(result, instructions)| Instruction::Loop {
+            result,
+            instructions,
+        },
+    )(bytes)
+}
+
+fn conditional(bytes: &[u8]) -> ParseResult<Instruction> {
+    let body = many_till(
+        instruction,
+        alt((
+            map(tag(&[END_BYTE]), |_| Vec::new()),
+            preceded(tag(&[ELSE_BYTE]), instruction_sequence),
+        )),
+    );
+
+    map(
+        preceded(op(0x04), tuple((result_type, body))),
+        |(result, (success, failure))| Instruction::Conditional {
+            result,
+            success,
+            failure,
+        },
+    )(bytes)
 }
 
 fn paremetric_instruction(bytes: &[u8]) -> ParseResult<Instruction> {
@@ -203,6 +115,48 @@ fn paremetric_instruction(bytes: &[u8]) -> ParseResult<Instruction> {
         map(op(0x1A), |_| Instruction::Drop),
         map(op(0x1B), |_| Instruction::Select),
     ))(bytes)
+}
+
+fn memory_instruction(bytes: &[u8]) -> ParseResult<Instruction> {
+    let memory_op = |code| preceded(op(code), memory_argument);
+
+    alt((
+        alt((
+            map(memory_op(0x28), Instruction::I32Load),
+            map(memory_op(0x29), Instruction::I64Load),
+            map(memory_op(0x2a), Instruction::F32Load),
+            map(memory_op(0x2b), Instruction::F64Load),
+            map(memory_op(0x2c), Instruction::I32Load8Signed),
+            map(memory_op(0x2d), Instruction::I32Load8Unsigned),
+            map(memory_op(0x2e), Instruction::I32Load16Signed),
+            map(memory_op(0x2f), Instruction::I32Load16Unsigned),
+            map(memory_op(0x30), Instruction::I64Load8Signed),
+            map(memory_op(0x31), Instruction::I64Load8Unsigned),
+            map(memory_op(0x32), Instruction::I64Load16Signed),
+        )),
+        alt((
+            map(memory_op(0x33), Instruction::I64Load16Unsigned),
+            map(memory_op(0x34), Instruction::I64Load32Signed),
+            map(memory_op(0x35), Instruction::I64Load32Unsigned),
+            map(memory_op(0x36), Instruction::I32Store),
+            map(memory_op(0x37), Instruction::I64Store),
+            map(memory_op(0x38), Instruction::F32Store),
+            map(memory_op(0x39), Instruction::F64Store),
+            map(memory_op(0x3a), Instruction::I32Store8),
+            map(memory_op(0x3b), Instruction::I32Store16),
+            map(memory_op(0x3c), Instruction::I64Store8),
+            map(memory_op(0x3d), Instruction::I64Store16),
+            map(memory_op(0x3e), Instruction::I64Store32),
+        )),
+        map(tuple((op(0x3f), tag(&[0x00]))), |_| Instruction::MemorySize),
+        map(tuple((op(0x40), tag(&[0x00]))), |_| Instruction::MemoryGrow),
+    ))(bytes)
+}
+
+fn memory_argument(bytes: &[u8]) -> ParseResult<MemoryArgument> {
+    map(tuple((leb_u32, leb_u32)), |(align, offset)| {
+        MemoryArgument { align, offset }
+    })(bytes)
 }
 
 fn variable_instructions(bytes: &[u8]) -> ParseResult<Instruction> {

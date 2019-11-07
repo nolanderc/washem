@@ -1,48 +1,18 @@
 #[macro_use]
 mod error;
-mod values;
-mod structure;
-mod sections;
-mod types;
 mod combinator;
-mod indices;
 mod expression;
+mod indices;
 mod instruction;
+mod sections;
+mod structure;
+mod types;
+mod values;
 
 use self::error::*;
 use self::sections::*;
+use crate::ast::*;
 use nom::{bytes::complete::*, combinator::*};
-
-#[derive(Debug)]
-pub struct Module {
-    sections: ModuleSections,
-}
-
-#[derive(Debug)]
-struct ModuleSections {
-    pre_types: Option<CustomSection>,
-    types: Option<TypeSection>,
-    pre_import: Option<CustomSection>,
-    import: Option<ImportSection>,
-    pre_function: Option<CustomSection>,
-    function: Option<FunctionSection>,
-    pre_table: Option<CustomSection>,
-    table: Option<TableSection>,
-    pre_memory: Option<CustomSection>,
-    memory: Option<MemorySection>,
-    pre_global: Option<CustomSection>,
-    global: Option<GlobalSection>,
-    pre_export: Option<CustomSection>,
-    export: Option<ExportSection>,
-    pre_start: Option<CustomSection>,
-    start: Option<StartSection>,
-    pre_element: Option<CustomSection>,
-    element: Option<ElementSection>,
-    pre_code: Option<CustomSection>,
-    code: Option<CodeSection>,
-    pre_data: Option<CustomSection>,
-    data: Option<DataSection>,
-}
 
 pub fn parse_module(bytes: &[u8]) -> Result<Module> {
     match module(bytes) {
@@ -117,4 +87,3 @@ fn module_magic(bytes: &[u8]) -> ParseResult<&[u8]> {
 fn module_version(bytes: &[u8]) -> ParseResult<&[u8]> {
     tag(b"\x01\x00\x00\x00")(bytes)
 }
-
