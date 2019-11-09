@@ -2,6 +2,7 @@ mod ast;
 mod error;
 mod executor;
 mod load;
+mod module;
 
 use crate::error::*;
 use std::fs;
@@ -26,7 +27,13 @@ fn start(options: &Options) -> Result<()> {
     let bytes = fs::read(&options.input)?;
     let module = load::parse_module(&bytes)?;
 
-    dbg!(module);
+    let module = module::Module::from_ast(module)?;
+
+    let mut executor = executor::Executor::new();
+    
+    let _instance = executor.instantiate(module)?;
+
+    dbg!(_instance);
 
     Ok(())
 }

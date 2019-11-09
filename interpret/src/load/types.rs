@@ -16,8 +16,8 @@ pub fn value_type(bytes: &[u8]) -> ParseResult<ValueType> {
 
 pub fn result_type(bytes: &[u8]) -> ParseResult<ResultType> {
     alt((
-        map(tag(&[0x40]), |_| ResultType::Unit),
-        map(value_type, ResultType::Value),
+        map(tag(&[0x40]), |_| ResultType { types: None }),
+        map(value_type, |value| ResultType { types: Some(value) }),
     ))(bytes)
 }
 

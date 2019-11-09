@@ -59,7 +59,7 @@ pub struct Import {
     pub descriptor: ImportDescriptor,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum ImportDescriptor {
     Function(TypeIndex),
     Table(TableType),
@@ -167,3 +167,35 @@ pub struct DataSegment {
     pub offset: Expression,
     pub bytes: Vec<u8>,
 }
+
+
+impl ImportDescriptor {
+    pub fn function(self) -> Option<TypeIndex> {
+        match self {
+            ImportDescriptor::Function(index) => Some(index),
+            _ => None,
+        }
+    }
+
+    pub fn table(self) -> Option<TableType> {
+        match self {
+            ImportDescriptor::Table(ty) => Some(ty),
+            _ => None,
+        }
+    }
+
+    pub fn memory(self) -> Option<MemoryType> {
+        match self {
+            ImportDescriptor::Memory(ty) => Some(ty),
+            _ => None,
+        }
+    }
+
+    pub fn global(self) -> Option<GlobalType> {
+        match self {
+            ImportDescriptor::Global(ty) => Some(ty),
+            _ => None,
+        }
+    }
+}
+
