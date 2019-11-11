@@ -1,7 +1,7 @@
 use super::indices::*;
 use super::types::*;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Instruction {
     // Control
     Unreachable,

@@ -16,7 +16,7 @@ pub struct Module {
     pub exports: Vec<Export>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Function {
     pub ty: TypeIndex,
     pub locals: Vec<ValueType>,

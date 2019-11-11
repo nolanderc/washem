@@ -29,10 +29,19 @@ fn start(options: &Options) -> Result<()> {
 
     let module = module::Module::from_ast(module)?;
 
-    let mut executor = executor::Executor::new();
-    
-    let _instance = executor.instantiate(module)?;
+    dbg!(&module);
 
+    let file_name = options
+        .input
+        .file_stem()
+        .ok_or_else(|| err!("path did not contain a file name: {}", options.input.display()))?
+        .to_string_lossy();
+
+    let mut executor = executor::Executor::new();
+    executor.instantiate_env()?;
+    let _instance = executor.instantiate(file_name, module)?;
+
+    dbg!(executor);
     dbg!(_instance);
 
     Ok(())
