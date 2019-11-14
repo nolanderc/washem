@@ -12,56 +12,7 @@ pub const END_BYTE: u8 = 0x0b;
 pub const ELSE_BYTE: u8 = 0x05;
 
 pub fn instruction(bytes: &[u8]) -> ParseResult<Instruction> {
-    wrap_context(
-        alt((
-            control_instruction,
-            paremetric_instruction,
-            memory_instruction,
-            variable_instructions,
-            numeric_instructions,
-        )),
-        ParseLocation::Instruction,
-    )(bytes)
-}
-
-fn op(code: u8) -> impl Fn(&[u8]) -> ParseResult<u8> {
-    move |bytes| {
-        if bytes.is_empty() {
-            Err(ParseErrorKind::UnexpectedEof.into())
-        } else {
-            let op = bytes[0];
-            if op == code {
-                Ok((&bytes[1..], op))
-            } else {
-                Err(ParseErrorKind::InvalidOpCode(op).into())
-            }
-        }
-    }
-}
-
-fn control_instruction(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        map(op(0x00), |_| Instruction::Unreachable),
-        map(op(0x01), |_| Instruction::Nop),
-        block,
-        looping,
-        conditional,
-        map(preceded(op(0x0C), label_index), Instruction::Branch),
-        map(
-            preceded(op(0x0D), label_index),
-            Instruction::BranchConditional,
-        ),
-        map(
-            preceded(op(0x0E), tuple((vec(label_index), label_index))),
-            |(targets, default)| Instruction::BranchTable { targets, default },
-        ),
-        map(op(0x0F), |_| Instruction::Return),
-        map(preceded(op(0x10), function_index), Instruction::Call),
-        map(
-            preceded(op(0x11), terminated(type_index, tag(&[0x00]))),
-            Instruction::CallIndirect,
-        ),
-    ))(bytes)
+    wrap_context(parse_instruction, ParseLocation::Instruction)(bytes)
 }
 
 fn instruction_sequence(bytes: &[u8]) -> ParseResult<Vec<Instruction>> {
@@ -71,9 +22,223 @@ fn instruction_sequence(bytes: &[u8]) -> ParseResult<Vec<Instruction>> {
     )(bytes)
 }
 
+fn op(bytes: &[u8]) -> ParseResult<u8> {
+    if bytes.is_empty() {
+        Err(ParseErrorKind::UnexpectedEof.into())
+    } else {
+        Ok((&bytes[1..], bytes[0]))
+    }
+}
+
+fn parse_instruction(bytes: &[u8]) -> ParseResult<Instruction> {
+    let (bytes, op) = op(bytes)?;
+
+    let (bytes, instruction) = match op {
+        // Control
+        0x00 => (bytes, Instruction::Unreachable),
+        0x01 => (bytes, Instruction::Nop),
+        0x02 => block(bytes)?,
+        0x03 => looping(bytes)?,
+        0x04 => conditional(bytes)?,
+        0x0C => map(label_index, Instruction::Branch)(bytes)?,
+        0x0D => map(label_index, Instruction::BranchConditional)(bytes)?,
+        0x0E => branch_table(bytes)?,
+        0x0F => (bytes, Instruction::Return),
+        0x10 => map(function_index, Instruction::Call)(bytes)?,
+        0x11 => call_indirect(bytes)?,
+        0x1A => (bytes, Instruction::Drop),
+        0x1B => (bytes, Instruction::Select),
+
+        // Variable
+        0x20 => map(local_index, Instruction::LocalGet)(bytes)?,
+        0x21 => map(local_index, Instruction::LocalSet)(bytes)?,
+        0x22 => map(local_index, Instruction::LocalTee)(bytes)?,
+        0x23 => map(global_index, Instruction::GlobalGet)(bytes)?,
+        0x24 => map(global_index, Instruction::GlobalSet)(bytes)?,
+
+        // Memory
+        0x28 => map(memory_argument, Instruction::I32Load)(bytes)?,
+        0x29 => map(memory_argument, Instruction::I64Load)(bytes)?,
+        0x2a => map(memory_argument, Instruction::F32Load)(bytes)?,
+        0x2b => map(memory_argument, Instruction::F64Load)(bytes)?,
+        0x2c => map(memory_argument, Instruction::I32Load8Signed)(bytes)?,
+        0x2d => map(memory_argument, Instruction::I32Load8Unsigned)(bytes)?,
+        0x2e => map(memory_argument, Instruction::I32Load16Signed)(bytes)?,
+        0x2f => map(memory_argument, Instruction::I32Load16Unsigned)(bytes)?,
+        0x30 => map(memory_argument, Instruction::I64Load8Signed)(bytes)?,
+        0x31 => map(memory_argument, Instruction::I64Load8Unsigned)(bytes)?,
+        0x32 => map(memory_argument, Instruction::I64Load16Signed)(bytes)?,
+        0x33 => map(memory_argument, Instruction::I64Load16Unsigned)(bytes)?,
+        0x34 => map(memory_argument, Instruction::I64Load32Signed)(bytes)?,
+        0x35 => map(memory_argument, Instruction::I64Load32Unsigned)(bytes)?,
+        0x36 => map(memory_argument, Instruction::I32Store)(bytes)?,
+        0x37 => map(memory_argument, Instruction::I64Store)(bytes)?,
+        0x38 => map(memory_argument, Instruction::F32Store)(bytes)?,
+        0x39 => map(memory_argument, Instruction::F64Store)(bytes)?,
+        0x3a => map(memory_argument, Instruction::I32Store8)(bytes)?,
+        0x3b => map(memory_argument, Instruction::I32Store16)(bytes)?,
+        0x3c => map(memory_argument, Instruction::I64Store8)(bytes)?,
+        0x3d => map(memory_argument, Instruction::I64Store16)(bytes)?,
+        0x3e => map(memory_argument, Instruction::I64Store32)(bytes)?,
+        0x3f => map(tag(&[0x00]), |_| Instruction::MemorySize)(bytes)?,
+        0x40 => map(tag(&[0x00]), |_| Instruction::MemoryGrow)(bytes)?,
+
+        // Numeric
+        0x41 => map(leb_s32, Instruction::I32Const)(bytes)?,
+        0x42 => map(leb_s64, Instruction::I64Const)(bytes)?,
+        0x43 => map(le_f32, Instruction::F32Const)(bytes)?,
+        0x44 => map(le_f64, Instruction::F64Const)(bytes)?,
+
+        // 32 bit integer comparison
+        0x45 => (bytes, Instruction::I32EqualZero),
+        0x46 => (bytes, Instruction::I32Equal),
+        0x47 => (bytes, Instruction::I32NotEqual),
+        0x48 => (bytes, Instruction::I32LessThanSigned),
+        0x49 => (bytes, Instruction::I32LessThanUnsigned),
+        0x4a => (bytes, Instruction::I32GreaterThanSigned),
+        0x4b => (bytes, Instruction::I32GreaterThanUnsigned),
+        0x4c => (bytes, Instruction::I32LessEqualSigned),
+        0x4d => (bytes, Instruction::I32LessEqualUnsigned),
+        0x4e => (bytes, Instruction::I32GreaterEqualSigned),
+        0x4f => (bytes, Instruction::I32GreaterEqualUnsigned),
+
+        // 64 bit integer comparison
+        0x50 => (bytes, Instruction::I64EqualZero),
+        0x51 => (bytes, Instruction::I64Equal),
+        0x52 => (bytes, Instruction::I64NotEqual),
+        0x53 => (bytes, Instruction::I64LessThanSigned),
+        0x54 => (bytes, Instruction::I64LessThanUnsigned),
+        0x55 => (bytes, Instruction::I64GreaterThanSigned),
+        0x56 => (bytes, Instruction::I64GreaterThanUnsigned),
+        0x57 => (bytes, Instruction::I64LessEqualSigned),
+        0x58 => (bytes, Instruction::I64LessEqualUnsigned),
+        0x59 => (bytes, Instruction::I64GreaterEqualSigned),
+        0x5a => (bytes, Instruction::I64GreaterEqualUnsigned),
+
+        // Single precision floating point comparison
+        0x5b => (bytes, Instruction::F32Equal),
+        0x5c => (bytes, Instruction::F32NotEqual),
+        0x5d => (bytes, Instruction::F32LessThan),
+        0x5e => (bytes, Instruction::F32GreaterThan),
+        0x5f => (bytes, Instruction::F32LessEqual),
+        0x60 => (bytes, Instruction::F32GreaterEqual),
+
+        // Double precision floating point comparison
+        0x61 => (bytes, Instruction::F64Equal),
+        0x62 => (bytes, Instruction::F64NotEqual),
+        0x63 => (bytes, Instruction::F64LessThan),
+        0x64 => (bytes, Instruction::F64GreaterThan),
+        0x65 => (bytes, Instruction::F64LessEqual),
+        0x66 => (bytes, Instruction::F64GreaterEqual),
+
+        // 32 bit integer floating point operations
+        0x67 => (bytes, Instruction::I32LeadingZeros),
+        0x68 => (bytes, Instruction::I32TrailingZeros),
+        0x69 => (bytes, Instruction::I32CountOnes),
+        0x6a => (bytes, Instruction::I32Add),
+        0x6b => (bytes, Instruction::I32Sub),
+        0x6c => (bytes, Instruction::I32Mul),
+        0x6d => (bytes, Instruction::I32DivSigned),
+        0x6e => (bytes, Instruction::I32DivUnsigned),
+        0x6f => (bytes, Instruction::I32RemainderSigned),
+        0x70 => (bytes, Instruction::I32RemainderUnsigned),
+        0x71 => (bytes, Instruction::I32And),
+        0x72 => (bytes, Instruction::I32Or),
+        0x73 => (bytes, Instruction::I32Xor),
+        0x74 => (bytes, Instruction::I32ShiftLeft),
+        0x75 => (bytes, Instruction::I32ShiftRightSigned),
+        0x76 => (bytes, Instruction::I32ShiftRightUnsigned),
+        0x77 => (bytes, Instruction::I32RotateLeft),
+        0x78 => (bytes, Instruction::I32RotateRight),
+
+        // 64 bit integer floating point operations
+        0x79 => (bytes, Instruction::I64LeadingZeros),
+        0x7a => (bytes, Instruction::I64TrailingZeros),
+        0x7b => (bytes, Instruction::I64CountOnes),
+        0x7c => (bytes, Instruction::I64Add),
+        0x7d => (bytes, Instruction::I64Sub),
+        0x7e => (bytes, Instruction::I64Mul),
+        0x7f => (bytes, Instruction::I64DivSigned),
+        0x80 => (bytes, Instruction::I64DivUnsigned),
+        0x81 => (bytes, Instruction::I64RemainderSigned),
+        0x82 => (bytes, Instruction::I64RemainderUnsigned),
+        0x83 => (bytes, Instruction::I64And),
+        0x84 => (bytes, Instruction::I64Or),
+        0x85 => (bytes, Instruction::I64Xor),
+        0x86 => (bytes, Instruction::I64ShiftLeft),
+        0x87 => (bytes, Instruction::I64ShiftRightSigned),
+        0x88 => (bytes, Instruction::I64ShiftRightUnsigned),
+        0x89 => (bytes, Instruction::I64RotateLeft),
+        0x8a => (bytes, Instruction::I64RotateRight),
+
+        // Single precision floating point operations
+        0x8b => (bytes, Instruction::F32Abs),
+        0x8c => (bytes, Instruction::F32Neg),
+        0x8d => (bytes, Instruction::F32Ceil),
+        0x8e => (bytes, Instruction::F32Floor),
+        0x8f => (bytes, Instruction::F32Trunc),
+        0x90 => (bytes, Instruction::F32Nearest),
+        0x91 => (bytes, Instruction::F32Sqrt),
+        0x92 => (bytes, Instruction::F32Add),
+        0x93 => (bytes, Instruction::F32Sub),
+        0x94 => (bytes, Instruction::F32Mul),
+        0x95 => (bytes, Instruction::F32Div),
+        0x96 => (bytes, Instruction::F32Min),
+        0x97 => (bytes, Instruction::F32Max),
+        0x98 => (bytes, Instruction::F32Copysign),
+
+        // Double precision floating point operations
+        0x99 => (bytes, Instruction::F64Abs),
+        0x9a => (bytes, Instruction::F64Neg),
+        0x9b => (bytes, Instruction::F64Ceil),
+        0x9c => (bytes, Instruction::F64Floor),
+        0x9d => (bytes, Instruction::F64Trunc),
+        0x9e => (bytes, Instruction::F64Nearest),
+        0x9f => (bytes, Instruction::F64Sqrt),
+        0xa0 => (bytes, Instruction::F64Add),
+        0xa1 => (bytes, Instruction::F64Sub),
+        0xa2 => (bytes, Instruction::F64Mul),
+        0xa3 => (bytes, Instruction::F64Div),
+        0xa4 => (bytes, Instruction::F64Min),
+        0xa5 => (bytes, Instruction::F64Max),
+        0xa6 => (bytes, Instruction::F64Copysign),
+
+        // Conversions
+        0xa7 => (bytes, Instruction::I32WrapI64),
+        0xa8 => (bytes, Instruction::I32TruncF32Signed),
+        0xa9 => (bytes, Instruction::I32TruncF32Unsigned),
+        0xaa => (bytes, Instruction::I32TruncF64Signed),
+        0xab => (bytes, Instruction::I32TruncF64Unsigned),
+        0xac => (bytes, Instruction::I64ExtendI32Signed),
+        0xad => (bytes, Instruction::I64ExtendI32Unsigned),
+        0xae => (bytes, Instruction::I64TruncF32Signed),
+        0xaf => (bytes, Instruction::I64TruncF32Unsigned),
+        0xb0 => (bytes, Instruction::I64TruncF64Signed),
+        0xb1 => (bytes, Instruction::I64TruncF64Unsigned),
+        0xb2 => (bytes, Instruction::F32ConvertI32Signed),
+        0xb3 => (bytes, Instruction::F32ConvertI32Unsigned),
+        0xb4 => (bytes, Instruction::F32ConvertI64Signed),
+        0xb5 => (bytes, Instruction::F32ConvertI64Unsigned),
+        0xb6 => (bytes, Instruction::F32DemoteF64),
+        0xb7 => (bytes, Instruction::F64ConvertI32Signed),
+        0xb8 => (bytes, Instruction::F64ConvertI32Unsigned),
+        0xb9 => (bytes, Instruction::F64ConvertI64Signed),
+        0xba => (bytes, Instruction::F64ConvertI64Unsigned),
+        0xbb => (bytes, Instruction::F64PromoteF32),
+        0xbc => (bytes, Instruction::I32ReinterpretF32),
+        0xbd => (bytes, Instruction::I64ReinterpretF64),
+        0xbe => (bytes, Instruction::F32ReinterpretI32),
+        0xbf => (bytes, Instruction::F64ReinterpretI64),
+
+        op => return Err(ParseErrorKind::InvalidOpCode(op).into()),
+    };
+
+    Ok((bytes, instruction))
+}
+
 fn block(bytes: &[u8]) -> ParseResult<Instruction> {
     map(
-        preceded(op(0x02), tuple((result_type, instruction_sequence))),
+        tuple((result_type, instruction_sequence)),
         |(result, instructions)| Instruction::Block {
             result,
             instructions,
@@ -83,7 +248,7 @@ fn block(bytes: &[u8]) -> ParseResult<Instruction> {
 
 fn looping(bytes: &[u8]) -> ParseResult<Instruction> {
     map(
-        preceded(op(0x03), tuple((result_type, instruction_sequence))),
+        tuple((result_type, instruction_sequence)),
         |(result, instructions)| Instruction::Loop {
             result,
             instructions,
@@ -101,7 +266,7 @@ fn conditional(bytes: &[u8]) -> ParseResult<Instruction> {
     );
 
     map(
-        preceded(op(0x04), tuple((result_type, body))),
+        tuple((result_type, body)),
         |(result, (success, failure))| Instruction::Conditional {
             result,
             success,
@@ -110,47 +275,18 @@ fn conditional(bytes: &[u8]) -> ParseResult<Instruction> {
     )(bytes)
 }
 
-fn paremetric_instruction(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        map(op(0x1A), |_| Instruction::Drop),
-        map(op(0x1B), |_| Instruction::Select),
-    ))(bytes)
+fn branch_table(bytes: &[u8]) -> ParseResult<Instruction> {
+    map(
+        tuple((vec(label_index), label_index)),
+        |(targets, default)| Instruction::BranchTable { targets, default },
+    )(bytes)
 }
 
-fn memory_instruction(bytes: &[u8]) -> ParseResult<Instruction> {
-    let memory_op = |code| preceded(op(code), memory_argument);
-
-    alt((
-        alt((
-            map(memory_op(0x28), Instruction::I32Load),
-            map(memory_op(0x29), Instruction::I64Load),
-            map(memory_op(0x2a), Instruction::F32Load),
-            map(memory_op(0x2b), Instruction::F64Load),
-            map(memory_op(0x2c), Instruction::I32Load8Signed),
-            map(memory_op(0x2d), Instruction::I32Load8Unsigned),
-            map(memory_op(0x2e), Instruction::I32Load16Signed),
-            map(memory_op(0x2f), Instruction::I32Load16Unsigned),
-            map(memory_op(0x30), Instruction::I64Load8Signed),
-            map(memory_op(0x31), Instruction::I64Load8Unsigned),
-            map(memory_op(0x32), Instruction::I64Load16Signed),
-        )),
-        alt((
-            map(memory_op(0x33), Instruction::I64Load16Unsigned),
-            map(memory_op(0x34), Instruction::I64Load32Signed),
-            map(memory_op(0x35), Instruction::I64Load32Unsigned),
-            map(memory_op(0x36), Instruction::I32Store),
-            map(memory_op(0x37), Instruction::I64Store),
-            map(memory_op(0x38), Instruction::F32Store),
-            map(memory_op(0x39), Instruction::F64Store),
-            map(memory_op(0x3a), Instruction::I32Store8),
-            map(memory_op(0x3b), Instruction::I32Store16),
-            map(memory_op(0x3c), Instruction::I64Store8),
-            map(memory_op(0x3d), Instruction::I64Store16),
-            map(memory_op(0x3e), Instruction::I64Store32),
-        )),
-        map(tuple((op(0x3f), tag(&[0x00]))), |_| Instruction::MemorySize),
-        map(tuple((op(0x40), tag(&[0x00]))), |_| Instruction::MemoryGrow),
-    ))(bytes)
+fn call_indirect(bytes: &[u8]) -> ParseResult<Instruction> {
+    map(
+        terminated(type_index, tag(&[0x00])),
+        Instruction::CallIndirect,
+    )(bytes)
 }
 
 fn memory_argument(bytes: &[u8]) -> ParseResult<MemoryArgument> {
@@ -158,210 +294,3 @@ fn memory_argument(bytes: &[u8]) -> ParseResult<MemoryArgument> {
         MemoryArgument { align, offset }
     })(bytes)
 }
-
-fn variable_instructions(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        map(preceded(op(0x20), local_index), Instruction::LocalGet),
-        map(preceded(op(0x21), local_index), Instruction::LocalSet),
-        map(preceded(op(0x22), local_index), Instruction::LocalTee),
-        map(preceded(op(0x23), global_index), Instruction::GlobalGet),
-        map(preceded(op(0x24), global_index), Instruction::GlobalSet),
-    ))(bytes)
-}
-
-fn numeric_instructions(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        numeric_const,
-        numeric_i32_comparison,
-        numeric_i64_comparison,
-        numeric_f32_comparison,
-        numeric_f64_comparison,
-        numeric_i32_operation,
-        numeric_i64_operation,
-        numeric_f32_operation,
-        numeric_f64_operation,
-        numeric_conversion,
-    ))(bytes)
-}
-
-fn numeric_const(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        map(preceded(op(0x41), leb_s32), Instruction::I32Const),
-        map(preceded(op(0x42), leb_s64), Instruction::I64Const),
-        map(preceded(op(0x43), le_f32), Instruction::F32Const),
-        map(preceded(op(0x44), le_f64), Instruction::F64Const),
-    ))(bytes)
-}
-
-fn numeric_i32_comparison(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        map(op(0x45), |_| Instruction::I32EqualZero),
-        map(op(0x46), |_| Instruction::I32Equal),
-        map(op(0x47), |_| Instruction::I32NotEqual),
-        map(op(0x48), |_| Instruction::I32LessThanSigned),
-        map(op(0x49), |_| Instruction::I32LessThanUnsigned),
-        map(op(0x4a), |_| Instruction::I32GreaterThanSigned),
-        map(op(0x4b), |_| Instruction::I32GreaterThanUnsigned),
-        map(op(0x4c), |_| Instruction::I32LessEqualSigned),
-        map(op(0x4d), |_| Instruction::I32LessEqualUnsigned),
-        map(op(0x4e), |_| Instruction::I32GreaterEqualSigned),
-        map(op(0x4f), |_| Instruction::I32GreaterEqualUnsigned),
-    ))(bytes)
-}
-
-fn numeric_i64_comparison(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        map(op(0x50), |_| Instruction::I64EqualZero),
-        map(op(0x51), |_| Instruction::I64Equal),
-        map(op(0x52), |_| Instruction::I64NotEqual),
-        map(op(0x53), |_| Instruction::I64LessThanSigned),
-        map(op(0x54), |_| Instruction::I64LessThanUnsigned),
-        map(op(0x55), |_| Instruction::I64GreaterThanSigned),
-        map(op(0x56), |_| Instruction::I64GreaterThanUnsigned),
-        map(op(0x57), |_| Instruction::I64LessEqualSigned),
-        map(op(0x58), |_| Instruction::I64LessEqualUnsigned),
-        map(op(0x59), |_| Instruction::I64GreaterEqualSigned),
-        map(op(0x5a), |_| Instruction::I64GreaterEqualUnsigned),
-    ))(bytes)
-}
-
-fn numeric_f32_comparison(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        map(op(0x5b), |_| Instruction::F32Equal),
-        map(op(0x5c), |_| Instruction::F32NotEqual),
-        map(op(0x5d), |_| Instruction::F32LessThan),
-        map(op(0x5e), |_| Instruction::F32GreaterThan),
-        map(op(0x5f), |_| Instruction::F32LessEqual),
-        map(op(0x60), |_| Instruction::F32GreaterEqual),
-    ))(bytes)
-}
-
-fn numeric_f64_comparison(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        map(op(0x61), |_| Instruction::F64Equal),
-        map(op(0x62), |_| Instruction::F64NotEqual),
-        map(op(0x63), |_| Instruction::F64LessThan),
-        map(op(0x64), |_| Instruction::F64GreaterThan),
-        map(op(0x65), |_| Instruction::F64LessEqual),
-        map(op(0x66), |_| Instruction::F64GreaterEqual),
-    ))(bytes)
-}
-
-fn numeric_i32_operation(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        map(op(0x67), |_| Instruction::I32LeadingZeros),
-        map(op(0x68), |_| Instruction::I32TrailingZeros),
-        map(op(0x69), |_| Instruction::I32CountOnes),
-        map(op(0x6a), |_| Instruction::I32Add),
-        map(op(0x6b), |_| Instruction::I32Sub),
-        map(op(0x6c), |_| Instruction::I32Mul),
-        map(op(0x6d), |_| Instruction::I32DivSigned),
-        map(op(0x6e), |_| Instruction::I32DivUnsigned),
-        map(op(0x6f), |_| Instruction::I32RemainderSigned),
-        map(op(0x70), |_| Instruction::I32RemainderUnsigned),
-        map(op(0x71), |_| Instruction::I32And),
-        map(op(0x72), |_| Instruction::I32Or),
-        map(op(0x73), |_| Instruction::I32Xor),
-        map(op(0x74), |_| Instruction::I32ShiftLeft),
-        map(op(0x75), |_| Instruction::I32ShiftRightSigned),
-        map(op(0x76), |_| Instruction::I32ShiftRightUnsigned),
-        map(op(0x77), |_| Instruction::I32RotateLeft),
-        map(op(0x78), |_| Instruction::I32RotateRight),
-    ))(bytes)
-}
-
-fn numeric_i64_operation(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        map(op(0x79), |_| Instruction::I64LeadingZeros),
-        map(op(0x7a), |_| Instruction::I64TrailingZeros),
-        map(op(0x7b), |_| Instruction::I64CountOnes),
-        map(op(0x7c), |_| Instruction::I64Add),
-        map(op(0x7d), |_| Instruction::I64Sub),
-        map(op(0x7e), |_| Instruction::I64Mul),
-        map(op(0x7f), |_| Instruction::I64DivSigned),
-        map(op(0x80), |_| Instruction::I64DivUnsigned),
-        map(op(0x81), |_| Instruction::I64RemainderSigned),
-        map(op(0x82), |_| Instruction::I64RemainderUnsigned),
-        map(op(0x83), |_| Instruction::I64And),
-        map(op(0x84), |_| Instruction::I64Or),
-        map(op(0x85), |_| Instruction::I64Xor),
-        map(op(0x86), |_| Instruction::I64ShiftLeft),
-        map(op(0x87), |_| Instruction::I64ShiftRightSigned),
-        map(op(0x88), |_| Instruction::I64ShiftRightUnsigned),
-        map(op(0x89), |_| Instruction::I64RotateLeft),
-        map(op(0x8a), |_| Instruction::I64RotateRight),
-    ))(bytes)
-}
-
-fn numeric_f32_operation(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        map(op(0x8b), |_| Instruction::F32Abs),
-        map(op(0x8c), |_| Instruction::F32Neg),
-        map(op(0x8d), |_| Instruction::F32Ceil),
-        map(op(0x8e), |_| Instruction::F32Floor),
-        map(op(0x8f), |_| Instruction::F32Trunc),
-        map(op(0x90), |_| Instruction::F32Nearest),
-        map(op(0x91), |_| Instruction::F32Sqrt),
-        map(op(0x92), |_| Instruction::F32Add),
-        map(op(0x93), |_| Instruction::F32Sub),
-        map(op(0x94), |_| Instruction::F32Mul),
-        map(op(0x95), |_| Instruction::F32Div),
-        map(op(0x96), |_| Instruction::F32Min),
-        map(op(0x97), |_| Instruction::F32Max),
-        map(op(0x98), |_| Instruction::F32Copysign),
-    ))(bytes)
-}
-
-fn numeric_f64_operation(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        map(op(0x99), |_| Instruction::F64Abs),
-        map(op(0x9a), |_| Instruction::F64Neg),
-        map(op(0x9b), |_| Instruction::F64Ceil),
-        map(op(0x9c), |_| Instruction::F64Floor),
-        map(op(0x9d), |_| Instruction::F64Trunc),
-        map(op(0x9e), |_| Instruction::F64Nearest),
-        map(op(0x9f), |_| Instruction::F64Sqrt),
-        map(op(0xa0), |_| Instruction::F64Add),
-        map(op(0xa1), |_| Instruction::F64Sub),
-        map(op(0xa2), |_| Instruction::F64Mul),
-        map(op(0xa3), |_| Instruction::F64Div),
-        map(op(0xa4), |_| Instruction::F64Min),
-        map(op(0xa5), |_| Instruction::F64Max),
-        map(op(0xa6), |_| Instruction::F64Copysign),
-    ))(bytes)
-}
-
-fn numeric_conversion(bytes: &[u8]) -> ParseResult<Instruction> {
-    alt((
-        alt((
-            map(op(0xa7), |_| Instruction::I32WrapI64),
-            map(op(0xa8), |_| Instruction::I32TruncF32Signed),
-            map(op(0xa9), |_| Instruction::I32TruncF32Unsigned),
-            map(op(0xaa), |_| Instruction::I32TruncF64Signed),
-            map(op(0xab), |_| Instruction::I32TruncF64Unsigned),
-            map(op(0xac), |_| Instruction::I64ExtendI32Signed),
-            map(op(0xad), |_| Instruction::I64ExtendI32Unsigned),
-            map(op(0xae), |_| Instruction::I64TruncF32Signed),
-            map(op(0xaf), |_| Instruction::I64TruncF32Unsigned),
-            map(op(0xb0), |_| Instruction::I64TruncF64Signed),
-            map(op(0xb1), |_| Instruction::I64TruncF64Unsigned),
-            map(op(0xb2), |_| Instruction::F32ConvertI32Signed),
-            map(op(0xb3), |_| Instruction::F32ConvertI32Unsigned),
-        )),
-        alt((
-            map(op(0xb4), |_| Instruction::F32ConvertI64Signed),
-            map(op(0xb5), |_| Instruction::F32ConvertI64Unsigned),
-            map(op(0xb6), |_| Instruction::F32DemoteF64),
-            map(op(0xb7), |_| Instruction::F64ConvertI32Signed),
-            map(op(0xb8), |_| Instruction::F64ConvertI32Unsigned),
-            map(op(0xb9), |_| Instruction::F64ConvertI64Signed),
-            map(op(0xba), |_| Instruction::F64ConvertI64Unsigned),
-            map(op(0xbb), |_| Instruction::F64PromoteF32),
-            map(op(0xbc), |_| Instruction::I32ReinterpretF32),
-            map(op(0xbd), |_| Instruction::I64ReinterpretF64),
-            map(op(0xbe), |_| Instruction::F32ReinterpretI32),
-            map(op(0xbf), |_| Instruction::F64ReinterpretI64),
-        )),
-    ))(bytes)
-}
-
