@@ -364,3 +364,4 @@ fn numeric_conversion(bytes: &[u8]) -> ParseResult<Instruction> {
         )),
     ))(bytes)
 }
+

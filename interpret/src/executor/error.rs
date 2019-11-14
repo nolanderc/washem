@@ -24,3 +24,14 @@ pub enum InstantiationError {
 pub type InstantiationResult<T, E = InstantiationError> = Result<T, E>;
 
 
+#[derive(Debug, Clone, Fail)]
+pub enum RuntimeError {
+    #[fail(display = "function not defined (invalid address)")]
+    FunctionNotDefined,
+    #[fail(display = "stack was invalid")]
+    InvalidStack,
+    #[fail(display = "no stack frame established")]
+    MissingStackFrame,
+}
+
+pub type RuntimeResult<T, E = RuntimeError> = Result<T, E>;

@@ -88,3 +88,10 @@ impl Limits {
             }
     }
 }
+
+impl ResultType {
+    pub fn arity(&self) -> u32 {
+        if self.types.is_some() { 1 } else { 0 }
+    }
+}
+

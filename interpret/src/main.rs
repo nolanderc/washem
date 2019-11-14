@@ -8,6 +8,7 @@ use crate::error::*;
 use std::fs;
 use std::path::PathBuf;
 use structopt::StructOpt;
+use std::time::Instant;
 
 #[derive(StructOpt)]
 struct Options {
@@ -25,11 +26,10 @@ fn main() {
 
 fn start(options: &Options) -> Result<()> {
     let bytes = fs::read(&options.input)?;
-    let module = load::parse_module(&bytes)?;
 
-    let module = module::Module::from_ast(module)?;
+    let module = time("parse", || load::parse_module(&bytes))?;
 
-    dbg!(&module);
+    let module = time("ast", || module::Module::from_ast(module))?;
 
     let file_name = options
         .input
@@ -39,10 +39,22 @@ fn start(options: &Options) -> Result<()> {
 
     let mut executor = executor::Executor::new();
     executor.instantiate_env()?;
-    let _instance = executor.instantiate(file_name, module)?;
+    let instance = time("instantiate", || executor.instantiate(file_name, module))?;
 
-    dbg!(executor);
-    dbg!(_instance);
+    let main_function = instance.function("main")?;
+
+    let result = time("execute", || executor.call(main_function, vec![]))?;
+
+    dbg!(result);
 
     Ok(())
 }
+
+fn time<T>(name: &str, f: impl FnOnce() -> T) -> T {
+    let start = Instant::now();
+    let result = f();
+    eprintln!("{}: {}ms", name, start.elapsed().as_secs_f64() * 1000.0);
+
+    result
+}
+

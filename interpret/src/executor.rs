@@ -2,22 +2,27 @@
 
 mod address;
 mod error;
+mod execution;
 mod validation;
 
 use self::address::*;
 use self::error::*;
+use self::execution::*;
 use self::validation::*;
 use crate::ast::prelude::*;
 use crate::module::*;
-use derive_more::{From, Deref, DerefMut};
+use derive_more::{Deref, DerefMut, From};
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::rc::Rc;
+
+pub use self::address::*;
 
 #[derive(Debug)]
 pub struct Executor {
     store: Store,
     modules: HashMap<String, Rc<ModuleInstance>>,
+    stack: Stack,
 }
 
 #[derive(Debug, Clone)]
@@ -76,14 +81,6 @@ pub struct GlobalInstance {
     mutability: Mutability,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum Value {
-    I32(i32),
-    I64(i64),
-    F32(f32),
-    F64(f64),
-}
-
 #[derive(Debug)]
 pub struct ModuleInstance {
     types: Vec<FunctionType>,
@@ -102,45 +99,12 @@ enum ExternalValue {
     Global(GlobalAddress),
 }
 
-#[derive(Debug)]
-pub struct Stack {
-    kinds: Vec<StackItemKind>,
-    values: Vec<Value>,
-    labels: Vec<Label>,
-    frames: Vec<Frame>,
-}
-
-#[derive(Debug, From)]
-enum StackItem {
-    Value(Value),
-    Label(Label),
-    Frame(Frame),
-}
-
-#[derive(Debug, From)]
-enum StackItemKind {
-    Value,
-    Label,
-    Frame,
-}
-
-#[derive(Debug)]
-pub struct Label {
-    arity: u32,
-}
-
-#[derive(Debug)]
-pub struct Frame {
-    arity: u32,
-    locals: Vec<Value>,
-    module: Rc<ModuleInstance>,
-}
-
 impl Executor {
     pub fn new() -> Self {
         Executor {
             store: Store::new(),
             modules: HashMap::new(),
+            stack: Stack::new(),
         }
     }
 
@@ -210,14 +174,52 @@ impl Executor {
         self.modules.insert(name.into(), Rc::clone(&instance));
 
         if let Some(start) = start {
-            self.invoke(start.function)?;
+            let FunctionIndex(index) = start.function;
+            let function = instance.functions[index as usize];
+            let mut context = self.store.as_context();
+            let mut stack = Stack::new();
+
+            context.invoke(function, &mut stack)?;
         }
 
         Ok(instance)
     }
 
-    pub fn invoke(&mut self, function: FunctionIndex) -> Result<Vec<Value>> {
-        unimplemented!();
+    pub fn call(&mut self, function: FunctionAddress, args: Vec<Value>) -> Result<Vec<Value>> {
+        let FunctionAddress(address) = function;
+        let instance = self
+            .store
+            .functions
+            .get(address as usize)
+            .ok_or_else(|| err!("function not found: {}", address))?;
+
+        expect_argument_match(&instance.ty, &args)?;
+
+        let dummy = Frame {
+            arity: 0,
+            locals: Vec::new(),
+            module: Rc::new(ModuleInstance::new()),
+        };
+
+        self.stack.push(dummy);
+
+        for arg in args {
+            self.stack.push(arg);
+        }
+
+        let mut context = Context {
+            functions: &self.store.functions,
+            tables: &mut self.store.tables,
+            memories: &mut self.store.memories,
+            globals: &mut self.store.globals,
+        };
+
+        context.invoke(function, &mut self.stack)?;
+
+        (0..instance.ty.results.len())
+            .map(|_| self.stack.pop_value())
+            .collect::<Option<_>>()
+            .ok_or_else(|| err!("failed to get function results"))
     }
 
     fn resolve_imports(&self, module: &Module) -> InstantiationResult<Vec<ExternalValue>> {
@@ -318,7 +320,7 @@ impl Executor {
             .iter()
             .map(|global| {
                 let value =
-                    evaluate_constant_expression(&global.expression, &self.store, &mut stack);
+                    evaluate_constant_expression(&global.expression, &self.store.globals, &mut stack);
 
                 GlobalInstance {
                     value,
@@ -353,6 +355,15 @@ impl Store {
 
     pub fn global(&self, GlobalAddress(address): GlobalAddress) -> Option<&GlobalInstance> {
         self.globals.get(address as usize)
+    }
+
+    pub(self) fn as_context(&mut self) -> Context {
+        Context {
+            functions: &self.functions,
+            tables: &mut self.tables,
+            memories: &mut self.memories,
+            globals: &mut self.globals,
+        }
     }
 
     pub(self) fn allocate_module(
@@ -465,7 +476,7 @@ impl Store {
         stack: &mut Stack,
     ) -> InstantiationResult<()> {
         for element in elements {
-            let offset = evaluate_constant_expression(&element.offset, self, stack);
+            let offset = evaluate_constant_expression(&element.offset, &self.globals, stack);
             match offset {
                 Value::I32(offset) => {
                     let offset = offset as usize;
@@ -496,7 +507,7 @@ impl Store {
         stack: &mut Stack,
     ) -> InstantiationResult<()> {
         for segment in data {
-            let offset = evaluate_constant_expression(&segment.offset, self, stack);
+            let offset = evaluate_constant_expression(&segment.offset, &self.globals, stack);
             match offset {
                 Value::I32(offset) => {
                     let offset = offset as usize;
@@ -507,7 +518,7 @@ impl Store {
                     if end > memory.bytes.len() {
                         return Err(InstantiationError::DataSegmentOutOfRange);
                     } else {
-                        memory.bytes[offset..].copy_from_slice(&segment.bytes);
+                        memory.bytes[offset..end].copy_from_slice(&segment.bytes);
                     }
                 }
                 _ => unreachable!("validation: got non i32 value when evaluating element offset"),
@@ -535,46 +546,6 @@ impl GlobalInstance {
             ty: self.value.ty(),
             mutability: self.mutability,
         }
-    }
-}
-
-impl Stack {
-    pub(self) fn new() -> Stack {
-        Stack {
-            kinds: Vec::new(),
-            values: Vec::new(),
-            labels: Vec::new(),
-            frames: Vec::new(),
-        }
-    }
-
-    pub(self) fn push(&mut self, item: impl Into<StackItem>) {
-        match item.into() {
-            StackItem::Value(value) => {
-                self.values.push(value);
-                self.kinds.push(StackItemKind::Value);
-            }
-            StackItem::Label(label) => {
-                self.labels.push(label);
-                self.kinds.push(StackItemKind::Label);
-            }
-            StackItem::Frame(frame) => {
-                self.frames.push(frame);
-                self.kinds.push(StackItemKind::Frame);
-            }
-        }
-    }
-
-    pub(self) fn pop(&mut self) -> Option<StackItem> {
-        match self.kinds.pop()? {
-            StackItemKind::Value => self.values.pop().map(StackItem::Value),
-            StackItemKind::Label => self.labels.pop().map(StackItem::Label),
-            StackItemKind::Frame => self.frames.pop().map(StackItem::Frame),
-        }
-    }
-
-    pub(self) fn frame(&self) -> Option<&Frame> {
-        self.frames.last()
     }
 }
 
@@ -619,6 +590,14 @@ impl ModuleInstance {
             exports: HashMap::new(),
         }
     }
+
+    // Get function with name from exports
+    pub fn function(&self, name: &str) -> Result<FunctionAddress> {
+        self.exports
+            .get(name)
+            .and_then(|a| a.function())
+            .ok_or_else(|| err!("function not fonud in module exports: {}", name))
+    }
 }
 
 impl Debug for ByteArray {
@@ -629,35 +608,39 @@ impl Debug for ByteArray {
     }
 }
 
-fn evaluate_constant_expression(
-    expression: &Expression,
-    store: &Store,
-    stack: &mut Stack,
-) -> Value {
-    for instruction in &expression.instructions {
-        match instruction {
-            Instruction::I32Const(value) => stack.push(Value::I32(*value)),
-            Instruction::I64Const(value) => stack.push(Value::I64(*value)),
-            Instruction::F32Const(value) => stack.push(Value::F32(*value)),
-            Instruction::F64Const(value) => stack.push(Value::F64(*value)),
+fn expect_argument_match(function: &FunctionType, args: &[Value]) -> Result<()> {
+    let expected_count = function.parameters.len();
+    if expected_count != args.len() {
+        return Err(err!(
+            "invalid number of argumnets: expected {} found {}",
+            expected_count,
+            args.len()
+        ));
+    }
 
-            Instruction::GlobalGet(GlobalIndex(index)) => {
-                // Logic error to have a stack without a frame
-                let frame = stack.frame().unwrap();
-
-                // Validation ensures that the global exists
-                let GlobalAddress(addr) = frame.module.globals.get(*index as usize).unwrap();
-                let global = store.globals.get(*addr as usize).unwrap();
-                stack.push(global.value);
-            }
-
-            _ => unreachable!("validation: non-constant instruction in constant expression"),
+    for (expected_type, value) in function.parameters.iter().zip(args) {
+        if *expected_type != value.ty() {
+            return Err(err!(
+                "invalid function argument: expected {:?} found {:?}",
+                expected_type,
+                value.ty()
+            ));
         }
     }
 
-    // Should never panic because of validation
-    match stack.pop().unwrap() {
-        StackItem::Value(value) => value,
-        _ => unreachable!("validation: got non-value while evaluating constant expression"),
+    Ok(())
+}
+
+impl FunctionCode {
+    pub fn locals<'a>(&'a self) -> impl Iterator<Item = ValueType> + 'a {
+        let locals = match self {
+            FunctionCode::Local(function) => {
+                function.locals.as_slice()
+            }
+            FunctionCode::Host(_) => &[],
+        };
+
+        locals.iter().copied()
     }
 }
+

@@ -1,12 +1,12 @@
 
-extern {
+extern "C" {
     fn print(x: u32);
 }
 
 #[no_mangle]
 pub fn fib(n: u32) -> u32 {
     if n <= 2 {
-        n
+        1
     } else {
         fib(n - 1) + fib(n - 2)
     }
@@ -14,8 +14,8 @@ pub fn fib(n: u32) -> u32 {
 
 #[no_mangle]
 pub fn main() {
-    unsafe {
-        print(fib(8));
+    for i in 1..30 {
+        println!("{}", fib(i));
     }
 }
 

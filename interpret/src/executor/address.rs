@@ -1,11 +1,11 @@
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct FunctionAddress(pub u32);
+pub struct FunctionAddress(pub(super) u32);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct TableAddress(pub u32);
+pub struct TableAddress(pub(super) u32);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct MemoryAddress(pub u32);
+pub struct MemoryAddress(pub(super) u32);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct GlobalAddress(pub u32);
+pub struct GlobalAddress(pub(super) u32);

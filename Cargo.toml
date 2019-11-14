@@ -2,3 +2,6 @@
 members = [
     "interpret",
 ]
+
+[profile.release]
+debug = true
