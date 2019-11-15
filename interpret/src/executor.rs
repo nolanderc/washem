@@ -600,6 +600,31 @@ impl ModuleInstance {
     }
 }
 
+impl MemoryInstance {
+    pub fn grow(&mut self, additional: usize) -> Option<usize> {
+        if additional > 0 {
+            let size = self.bytes.len() / PAGE_SIZE;
+            let new_size = PAGE_SIZE * (size + additional);
+
+            if new_size > (1 << 16) {
+                return None;
+            }
+
+            if let Some(max) = self.max_size {
+                if new_size > max as usize {
+                    return None;
+                }
+            }
+
+            self.bytes.bytes.resize(new_size, 0);
+
+            Some(size)
+        } else {
+            None
+        }
+    }
+}
+
 impl Debug for ByteArray {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "[u8; {}]", self.bytes.len())?;
@@ -643,4 +668,5 @@ impl FunctionCode {
         locals.iter().copied()
     }
 }
+
 

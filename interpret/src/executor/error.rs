@@ -32,6 +32,12 @@ pub enum RuntimeError {
     InvalidStack,
     #[fail(display = "no stack frame established")]
     MissingStackFrame,
+    #[fail(display = "attempt to read out of bounds")]
+    ReadOutOfBounds,
+    #[fail(display = "attempt to write out of bounds")]
+    WriteOutOfBounds,
+    #[fail(display = "reached unreachable code")]
+    Unreachable,
 }
 
 pub type RuntimeResult<T, E = RuntimeError> = Result<T, E>;
