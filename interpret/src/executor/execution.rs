@@ -424,17 +424,17 @@ impl<'a> Context<'a> {
                 I64RotateLeft => bin_op!(pop_value_i64, |a, b| a.rotate_left(b as u32)),
                 I64RotateRight => bin_op!(pop_value_i64, |a, b| a.rotate_right(b as u32)),
 
-                I64EqualZero => unary_op!(pop_value_i64, |a| (a == 0) as i64),
-                I64Equal => bin_op!(pop_value_i64, |a, b| (a == b) as i64),
-                I64NotEqual => bin_op!(pop_value_i64, |a, b| (a != b) as i64),
-                I64LessThanSigned => bin_op!(pop_value_i64, |a, b| (a < b) as i64),
-                I64LessThanUnsigned => bin_op!(pop_value_i64 as u64, |a, b| (a < b) as i64),
-                I64GreaterThanSigned => bin_op!(pop_value_i64, |a, b| (a > b) as i64),
-                I64GreaterThanUnsigned => bin_op!(pop_value_i64 as u64, |a, b| (a > b) as i64),
-                I64LessEqualSigned => bin_op!(pop_value_i64, |a, b| (a <= b) as i64),
-                I64LessEqualUnsigned => bin_op!(pop_value_i64 as u64, |a, b| (a <= b) as i64),
-                I64GreaterEqualSigned => bin_op!(pop_value_i64, |a, b| (a >= b) as i64),
-                I64GreaterEqualUnsigned => bin_op!(pop_value_i64 as u64, |a, b| (a >= b) as i64),
+                I64EqualZero => unary_op!(pop_value_i64, |a| (a == 0) as i32),
+                I64Equal => bin_op!(pop_value_i64, |a, b| (a == b) as i32),
+                I64NotEqual => bin_op!(pop_value_i64, |a, b| (a != b) as i32),
+                I64LessThanSigned => bin_op!(pop_value_i64, |a, b| (a < b) as i32),
+                I64LessThanUnsigned => bin_op!(pop_value_i64 as u64, |a, b| (a < b) as i32),
+                I64GreaterThanSigned => bin_op!(pop_value_i64, |a, b| (a > b) as i32),
+                I64GreaterThanUnsigned => bin_op!(pop_value_i64 as u64, |a, b| (a > b) as i32),
+                I64LessEqualSigned => bin_op!(pop_value_i64, |a, b| (a <= b) as i32),
+                I64LessEqualUnsigned => bin_op!(pop_value_i64 as u64, |a, b| (a <= b) as i32),
+                I64GreaterEqualSigned => bin_op!(pop_value_i64, |a, b| (a >= b) as i32),
+                I64GreaterEqualUnsigned => bin_op!(pop_value_i64 as u64, |a, b| (a >= b) as i32),
 
                 F32Abs => unary_op!(pop_value_f32, |a| a.abs()),
                 F32Neg => unary_op!(pop_value_f32, |a| a.neg()),
@@ -476,13 +476,13 @@ impl<'a> Context<'a> {
                 F64Copysign => bin_op!(pop_value_f64, |a, b| a.copysign(b)),
 
                 #[allow(clippy::float_cmp)]
-                F64Equal => bin_op!(pop_value_f64, |a, b| (a == b) as i64),
+                F64Equal => bin_op!(pop_value_f64, |a, b| (a == b) as i32),
                 #[allow(clippy::float_cmp)]
-                F64NotEqual => bin_op!(pop_value_f64, |a, b| (a != b) as i64),
-                F64LessThan => bin_op!(pop_value_f64, |a, b| (a < b) as i64),
-                F64GreaterThan => bin_op!(pop_value_f64, |a, b| (a > b) as i64),
-                F64LessEqual => bin_op!(pop_value_f64, |a, b| (a <= b) as i64),
-                F64GreaterEqual => bin_op!(pop_value_f64, |a, b| (a >= b) as i64),
+                F64NotEqual => bin_op!(pop_value_f64, |a, b| (a != b) as i32),
+                F64LessThan => bin_op!(pop_value_f64, |a, b| (a < b) as i32),
+                F64GreaterThan => bin_op!(pop_value_f64, |a, b| (a > b) as i32),
+                F64LessEqual => bin_op!(pop_value_f64, |a, b| (a <= b) as i32),
+                F64GreaterEqual => bin_op!(pop_value_f64, |a, b| (a >= b) as i32),
 
                 I32WrapI64 => unary_op!(pop_value_i64, |a| a as i32),
                 I32TruncF32Signed => unary_op!(pop_value_f32, |a| a as i32),
@@ -612,7 +612,7 @@ impl<'a> Context<'a> {
                     } else {
                         *default
                     };
-                    
+
                     stack.unwind(target);
                     return Ok(Exit::Continue(target.0));
                 }
@@ -634,6 +634,35 @@ impl<'a> Context<'a> {
                     let frame = stack.frame().unwrap();
                     let address = frame.module.functions[*index as usize];
                     self.invoke_internal(address, stack)?;
+                }
+
+                CallIndirect(TypeIndex(ty)) => {
+                    let value = stack.pop_value_i32().unwrap() as usize;
+
+                    let frame = stack.frame().unwrap();
+                    let TableAddress(address) = frame.module.tables[0];
+                    let table = &self.tables[address as usize];
+
+                    let expected_type = &frame.module.types[*ty as usize];
+
+                    if value >= table.elements.len() {
+                        return Err(RuntimeError::UndefinedReference.into());
+                    }
+
+                    let element = table.elements[value];
+                    match element {
+                        None => return Err(RuntimeError::UndefinedReference.into()),
+                        Some(element) => match element {
+                            TableElement::Function(address) => {
+                                let function = &self.functions[address.0 as usize];
+                                let actual_type = &function.ty;
+                                if actual_type != expected_type {
+                                    return Err(RuntimeError::FunctionTypeMismatch.into());
+                                }
+                                self.invoke_internal(address, stack)?;
+                            }
+                        },
+                    }
                 }
 
                 // Parametric
@@ -697,8 +726,6 @@ impl<'a> Context<'a> {
                         stack.push(Value::I32(-1));
                     }
                 }
-
-                _ => unimplemented!("instruction: {:?}", instruction),
             }
         }
 

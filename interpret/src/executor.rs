@@ -222,6 +222,15 @@ impl Executor {
             .ok_or_else(|| err!("failed to get function results"))
     }
 
+    pub fn dump_memory(&self, module: &ModuleInstance) -> Result<Vec<u8>> {
+        let MemoryAddress(addr) = module
+            .memories
+            .get(0)
+            .ok_or_else(|| err!("module has no memory"))?;
+        let memory = &self.store.memories[*addr as usize];
+        Ok(memory.bytes.bytes.clone())
+    }
+
     fn resolve_imports(&self, module: &Module) -> InstantiationResult<Vec<ExternalValue>> {
         use InstantiationError::*;
 
@@ -319,8 +328,11 @@ impl Executor {
             .globals
             .iter()
             .map(|global| {
-                let value =
-                    evaluate_constant_expression(&global.expression, &self.store.globals, &mut stack);
+                let value = evaluate_constant_expression(
+                    &global.expression,
+                    &self.store.globals,
+                    &mut stack,
+                );
 
                 GlobalInstance {
                     value,
@@ -655,14 +667,10 @@ fn expect_argument_match(function: &FunctionType, args: &[Value]) -> Result<()> 
 impl FunctionCode {
     pub fn locals<'a>(&'a self) -> impl Iterator<Item = ValueType> + 'a {
         let locals = match self {
-            FunctionCode::Local(function) => {
-                function.locals.as_slice()
-            }
+            FunctionCode::Local(function) => function.locals.as_slice(),
             FunctionCode::Host(_) => &[],
         };
 
         locals.iter().copied()
     }
 }
-
-

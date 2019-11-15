@@ -38,6 +38,10 @@ pub enum RuntimeError {
     WriteOutOfBounds,
     #[fail(display = "reached unreachable code")]
     Unreachable,
+    #[fail(display = "undefined function reference")]
+    UndefinedReference,
+    #[fail(display = "function type did not match expected type")]
+    FunctionTypeMismatch,
 }
 
 pub type RuntimeResult<T, E = RuntimeError> = Result<T, E>;

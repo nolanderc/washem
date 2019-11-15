@@ -43,9 +43,7 @@ fn start(options: &Options) -> Result<()> {
 
     let main_function = instance.function("main")?;
 
-    let result = time("execute", || executor.call(main_function, vec![]))?;
-
-    dbg!(result);
+    let _result = time("execute", || executor.call(main_function, vec![]))?;
 
     Ok(())
 }
