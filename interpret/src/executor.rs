@@ -604,18 +604,14 @@ impl MemoryInstance {
     pub fn grow(&mut self, additional: usize) -> Option<usize> {
         if additional > 0 {
             let size = self.bytes.len() / PAGE_SIZE;
-            let new_size = PAGE_SIZE * (size + additional);
+            let max = self.max_size.unwrap_or(1 << 16) as usize;
+            let remaining = max - size;
 
-            if new_size > (1 << 16) {
+            if additional > remaining {
                 return None;
             }
 
-            if let Some(max) = self.max_size {
-                if new_size > max as usize {
-                    return None;
-                }
-            }
-
+            let new_size = PAGE_SIZE * (size + additional);
             self.bytes.bytes.resize(new_size, 0);
 
             Some(size)
