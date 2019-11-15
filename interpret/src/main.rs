@@ -7,8 +7,8 @@ mod module;
 use crate::error::*;
 use std::fs;
 use std::path::PathBuf;
-use structopt::StructOpt;
 use std::time::Instant;
+use structopt::StructOpt;
 
 #[derive(StructOpt)]
 struct Options {
@@ -34,7 +34,12 @@ fn start(options: &Options) -> Result<()> {
     let file_name = options
         .input
         .file_stem()
-        .ok_or_else(|| err!("path did not contain a file name: {}", options.input.display()))?
+        .ok_or_else(|| {
+            err!(
+                "path did not contain a file name: {}",
+                options.input.display()
+            )
+        })?
         .to_string_lossy();
 
     let mut executor = executor::Executor::new();
@@ -55,4 +60,3 @@ fn time<T>(name: &str, f: impl FnOnce() -> T) -> T {
 
     result
 }
-
